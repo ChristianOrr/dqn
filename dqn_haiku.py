@@ -1,8 +1,8 @@
-from typing import Optional
-from typing import Sequence, Tuple
+from typing import Sequence, Tuple, Optional
 import functools
 import sys
 import time
+import argparse
 import dm_env
 import tensorflow as tf
 from acme.jax.experiments import config
@@ -27,13 +27,54 @@ import haiku as hk
 from acme.utils.loggers import base, TerminalLogger, Dispatcher
 from acme.utils.loggers.tf_summary import TFSummaryLogger
 from absl import logging
+from keras.utils import data_utils
+
+pretrained_weights = {"pong"}
+
+parser = argparse.ArgumentParser(description='Training for DQN Haiku')
+parser.add_argument("--env_type", default="Pong", help='Type of environment, options include: Pong, Breakout...', required=False)
+parser.add_argument("--actor_steps", default=10_000, help='Number of steps to train', required=False)
+parser.add_argument("--logs_dir", default="./logs", help='Path to save Tensorboard logs', required=False)
+parser.add_argument("--saves_dir", default="./saves", help='Path to save and load checkpoints', required=False)
+parser.add_argument("--weights_path",
+                    help='One of the following pretrained weights (will download automatically): '
+                         '"pong"'
+                         'or a path to pretrained checkpoint file (for fine turning)',
+                    default="pong", required=False)
+parser.add_argument("--lr", help="Initial value for learning rate.", default=0.0001, type=float, required=False)
+parser.add_argument("--batch_size", help='batch size to use during training', type=int, default=32)
+parser.add_argument("--eval_steps", default=1_000, help='Perform evaluation at every eval_steps frequency', required=False)
+parser.add_argument("--save_freq", help='Time in minutes to wait before saving a new checkpoint', type=int, default=10)
+args = parser.parse_args()
+
+
 
 
 # Type of environment, options include:
-# Pong
-ENV_TYPE = "Pong"
-ACTOR_STEPS = 10_000_000
-LOGS_DIR = "./logs/"
+# Pong, Breakout
+ENV_TYPE = args.env_type
+ACTOR_STEPS = args.actor_steps
+LOGS_DIR = f"{args.logs_dir}/{ENV_TYPE}/"
+CHECKPOINT_DIR = os.path.abspath(f"{args.saves_dir}/{ENV_TYPE}/")
+WEIGHTS = args.weights_path
+LR = args.lr
+BATCH_SIZE = args.batch_size
+EVAL_STEPS = args.eval_steps
+SAVE_FREQ = args.save_freq
+
+
+# Check if the weights are valid
+if not (WEIGHTS is None or
+        WEIGHTS in pretrained_weights or
+        tf.io.gfile.exists(WEIGHTS) or
+        tf.io.gfile.exists(WEIGHTS + ".index")):
+    raise ValueError('The `WEIGHTS` argument should be either '
+                        '`None` (random initialization), '
+                        f'one of the following pretrained weights: {pretrained_weights}, '
+                        'or the path to the weights file to be loaded. \n'
+                        f'Received `weights={WEIGHTS}`')
+
+
 
 
 def make_atari_environment(
@@ -105,14 +146,14 @@ def make_dqn_atari_network(
 dqn_config = dqn.DQNConfig(
             discount=0.99,
             eval_epsilon=0.0,
-            learning_rate=0.000_1,
+            learning_rate=LR,
             n_step=1,
             epsilon=0.1,
             target_update_period=1000,
             min_replay_size=20_000,
             max_replay_size=100_000,
             samples_per_insert=8,
-            batch_size=32
+            batch_size=BATCH_SIZE
             )
 loss_fn = losses.QLearning(
         discount=dqn_config.discount, 
@@ -141,9 +182,9 @@ def make_logger(
 
 checkpoint_config = experiments.CheckpointingConfig(
     max_to_keep=3,
-    directory="./saves/",
+    directory=CHECKPOINT_DIR,
     add_uid=False,
-    time_delta_minutes=10
+    time_delta_minutes=SAVE_FREQ
 )
 
 
@@ -263,7 +304,7 @@ num_eval_episodes: How many evaluation episodes to execute at each
     evaluation step.
 """
 experiment = experiment_config
-eval_every=1000
+eval_every=EVAL_STEPS
 num_eval_episodes = 1
 
 
@@ -333,7 +374,7 @@ train_logger = experiment.logger_factory('actor',
                                         train_counter.get_steps_key(), 0)
 
 
-state_0 = learner._state.params.copy()
+# state_0 = learner._state.params.copy()
 
 checkpointer = savers.Checkpointer(
     objects_to_save={
@@ -350,25 +391,25 @@ ckpt = tf.train.Checkpoint(
     learner=acme.tf.savers.SaveableAdapter(learner),
     counter=acme.tf.savers.SaveableAdapter(parent_counter)
     )
-ckpt_path = os.path.abspath('./saves/')
-mgr = tf.train.CheckpointManager(ckpt, ckpt_path, 1)
-latest_ckpt = tf.train.latest_checkpoint(ckpt_path)
+mgr = tf.train.CheckpointManager(ckpt, CHECKPOINT_DIR, 1)
 
 
 
 
+if WEIGHTS in pretrained_weights:
+    pretrained_models_url = f"https://huggingface.co/ChristianOrr/dqn/resolve/main/{WEIGHTS}_haiku/"
 
+    data_utils.get_file(f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/checkpoint", f"{pretrained_models_url}checkpoint")
+    data_utils.get_file(f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/ckpt-1.data-00000-of-00002", f"{pretrained_models_url}ckpt-1.data-00000-of-00002")
+    data_utils.get_file(f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/ckpt-1.data-00001-of-00002", f"{pretrained_models_url}ckpt-1.data-00001-of-00002")
+    data_utils.get_file(f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/ckpt-1.index", f"{pretrained_models_url}ckpt-1.index")
 
-
-ckpt.restore(latest_ckpt).assert_consumed()
-state_1 = learner._state.params.copy()
-
-for layers, layer_weights in state_0.items():
-    for weight_name, weight in layer_weights.items():
-        if weight_name == "w":
-            assert(state_0[layers][weight_name] - state_1[layers][weight_name]).sum() != 0, f'New parameters are the same as old {layers}.{weight_name}'
-            print(f'{layers}.{weight_name} parameters successfully updated!')
-
+    # latest_ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR + "{WEIGHTS}_haiku/")
+    latest_ckpt = f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/ckpt-1"
+    ckpt.restore(latest_ckpt).assert_consumed()
+elif WEIGHTS is not None:
+    latest_ckpt = tf.train.latest_checkpoint(WEIGHTS)
+    ckpt.restore(latest_ckpt).assert_consumed()
 
 
 # Replace the actor with a LearningActor. This makes sure that every time
@@ -422,8 +463,8 @@ while steps < max_num_actor_steps:
 eval_loop.run(num_episodes=num_eval_episodes)
 print("Training Complete!")
 print("--------------------------\n")
-
-ckpt.save("./saves/ckpt")
+# Save final checkpoint
+ckpt.save(f"{CHECKPOINT_DIR}ckpt")
 
 
 # Test the trained model
