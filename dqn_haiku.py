@@ -3,10 +3,7 @@ from typing import Sequence, Tuple
 import functools
 import sys
 import time
-import collections
 import dm_env
-import pandas as pd
-import matplotlib.pyplot as plt
 import tensorflow as tf
 from acme.jax.experiments import config
 from acme.utils import counting
@@ -27,12 +24,17 @@ from acme.utils import loggers
 from acme.agents.jax.dqn import losses
 import gym
 import haiku as hk
+from acme.utils.loggers import base, TerminalLogger, Dispatcher
+from acme.utils.loggers.tf_summary import TFSummaryLogger
+from absl import logging
 
 
 # Type of environment, options include:
 # Pong
 ENV_TYPE = "Pong"
-ACTOR_STEPS = 1_000
+ACTOR_STEPS = 10_000_000
+LOGS_DIR = "./logs/"
+
 
 def make_atari_environment(
     level: str = 'Pong',
@@ -108,7 +110,7 @@ dqn_config = dqn.DQNConfig(
             epsilon=0.1,
             target_update_period=1000,
             min_replay_size=20_000,
-            max_replay_size=1_000_000,
+            max_replay_size=100_000,
             samples_per_insert=8,
             batch_size=32
             )
@@ -122,17 +124,19 @@ dqn_builder = dqn.DQNBuilder(
         )
 
 
-# Specify how to log training data: in this case keeping it in memory.
-# NOTE: We create a dict to hold the loggers so we can access the data after
-# the experiment has run.
-logger_dict = collections.defaultdict(loggers.InMemoryLogger)
-def logger_factory(
-    name: str,
-    steps_key: Optional[str] = None,
-    task_id: Optional[int] = None,
+
+def make_logger(
+        name: str,
+        steps_key: Optional[str] = None,
+        task_id: Optional[int] = None,
 ) -> loggers.Logger:
-  del steps_key, task_id
-  return logger_dict[name]
+    terminal_logger = TerminalLogger(label=name, print_fn=logging.info)
+    tb_logger = TFSummaryLogger(LOGS_DIR, label=name, steps_key=steps_key)
+    serialize_fn = base.to_numpy
+    logger = Dispatcher([terminal_logger, tb_logger], serialize_fn)
+    return logger
+
+
 
 
 checkpoint_config = experiments.CheckpointingConfig(
@@ -147,7 +151,7 @@ experiment_config = experiments.ExperimentConfig(
     builder=dqn_builder,
     environment_factory=make_environment,
     network_factory=make_dqn_atari_network,
-    logger_factory=logger_factory,
+    logger_factory=make_logger,
     seed=0,
     max_num_actor_steps=ACTOR_STEPS,
     checkpointing=checkpoint_config)  
@@ -409,38 +413,20 @@ eval_loop = acme.EnvironmentLoop(
     logger=eval_logger,
     observers=experiment.observers)
 
-
+print("\n--------------------------")
+print("Starting Training")
 steps = 0
 while steps < max_num_actor_steps:
     eval_loop.run(num_episodes=num_eval_episodes)
     steps += train_loop.run(num_steps=eval_every)
 eval_loop.run(num_episodes=num_eval_episodes)
-
-
-
-# ckpt = tf.train.Checkpoint(
-#     learner=acme.tf.savers.SaveableAdapter(learner)
-#     )
-# ckpt_path = './saves/ckpt'
-# mgr = tf.train.CheckpointManager(ckpt, ckpt_path, 1)
-# latest_ckpt = tf.train.latest_checkpoint("./saves/ckpt")
-
-
+print("Training Complete!")
+print("--------------------------\n")
 
 ckpt.save("./saves/ckpt")
 
 
-
-
-
-df = pd.DataFrame(logger_dict['evaluator'].data)
-plt.figure(figsize=(10, 4))
-plt.title('Training episodes returns')
-plt.xlabel('Training episodes')
-plt.ylabel('Episode return')
-plt.plot(df['evaluator_episodes'], df['episode_return'], label='Training Episodes return')
-
-
+# Test the trained model
 env = make_atari_environment(
         level=ENV_TYPE,
         sticky_actions=False,
@@ -452,7 +438,9 @@ test_loop = acme.EnvironmentLoop(
     env,
     eval_actor)
 
-
+print("\n--------------------------")
+print("Starting Testing")
 test_loop.run(num_episodes=1)
-
+print("Testing Complete!")
+print("--------------------------\n")
 
