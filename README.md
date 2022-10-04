@@ -5,7 +5,7 @@ This repository contains an implementation of DQN using Acme. This implementatio
 - Logging training data to Tensorboard.
 - A demo of the model playing the atari game after it has been trained.
 
-
+DQN is capabale of playing many Atari games, although not with equal competency, see the Vanilla DQN paper in the references for performance evaluation. The weights are unfortunately not transferable to different games, since the weights save the learner object, which is dependant on the environment.  
 
 
 ## Installation Requirements
@@ -17,7 +17,7 @@ If you want jax for GPU, run the following command first:
 ```
 pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ``` 
-
+Note that the version of tensorflow is important for Reverb, so its better to install tensorflow with the acme package as shown above. Open AI Gym must not be greater then version 25, since there are breaking changes introduced in version 26.
 
 
 ## References 
