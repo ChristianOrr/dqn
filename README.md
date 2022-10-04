@@ -17,7 +17,10 @@ If you want jax for GPU, run the following command first:
 ```
 pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ``` 
-Note that the version of tensorflow is important for Reverb, so its better to install tensorflow with the acme package as shown above. Open AI Gym must not be greater then version 25, since there are breaking changes introduced in version 26.
+Note that the version of tensorflow is important for Reverb, so its better to install tensorflow with the acme package as shown above. Open AI Gym must not be greater then version 0.25, since there are breaking changes introduced in version 0.26. You will also need access to the Atari ROM:
+```
+pip install autorom[accept-rom-license]
+```
 
 
 ## References 
