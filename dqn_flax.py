@@ -35,8 +35,8 @@ pretrained_weights = {"pong"}
 parser = argparse.ArgumentParser(description='Training for DQN Flax')
 parser.add_argument("--env_type", default="Pong", help='Type of environment, options include: Pong, Breakout...', required=False)
 parser.add_argument("--actor_steps", default=500_000, help='Number of steps to train', required=False)
-parser.add_argument("--logs_dir", default="./logs", help='Path to save Tensorboard logs', required=False)
-parser.add_argument("--saves_dir", default="./saves", help='Path to save and load checkpoints', required=False)
+parser.add_argument("--logs_dir", default="./logs/flax", help='Path to save Tensorboard logs', required=False)
+parser.add_argument("--saves_dir", default="./saves/flax", help='Path to save and load checkpoints', required=False)
 parser.add_argument("--weights_path",
                     help='One of the following pretrained weights (will download automatically): '
                          '"pong"'
@@ -55,8 +55,8 @@ args = parser.parse_args()
 # Pong, Breakout
 ENV_TYPE = args.env_type
 ACTOR_STEPS = args.actor_steps
-LOGS_DIR = f"{args.logs_dir}/flax/{ENV_TYPE}/"
-CHECKPOINT_DIR = os.path.abspath(f"{args.saves_dir}/flax/{ENV_TYPE}/")
+LOGS_DIR = f"{args.logs_dir}/{ENV_TYPE}/"
+CHECKPOINT_DIR = os.path.abspath(f"{args.saves_dir}/{ENV_TYPE}/")
 WEIGHTS = args.weights_path
 LR = args.lr
 BATCH_SIZE = args.batch_size
@@ -164,8 +164,6 @@ class PolicyNetwork(nn.Module):
 
 
 
-
-
 def make_dqn_atari_network(
     environment_spec: specs.EnvironmentSpec) -> dqn.DQNNetworks:
     """Creates networks for training DQN on Atari."""
@@ -177,14 +175,6 @@ def make_dqn_atari_network(
         init=lambda rng: network_flax.init(rng, obs), apply=network_flax.apply)
     typed_network = networks_lib.non_stochastic_network_to_typed(network)
     return dqn.DQNNetworks(policy_network=typed_network)
-
-
-
-
-
-
-
-
 
 
 
@@ -443,17 +433,18 @@ mgr = tf.train.CheckpointManager(ckpt, CHECKPOINT_DIR, 1)
 
 
 
-
 if WEIGHTS in pretrained_weights:
-    pretrained_models_url = f"https://huggingface.co/ChristianOrr/dqn/resolve/main/{WEIGHTS}_haiku/"
+    pretrained_models_url = f"https://huggingface.co/ChristianOrr/dqn/resolve/main/{WEIGHTS}_flax/"
+    pretrained_dir = f"{CHECKPOINT_DIR}/{WEIGHTS}_flax"
+    os.makedirs(pretrained_dir, exist_ok=True)
 
-    data_utils.get_file(f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/checkpoint", f"{pretrained_models_url}checkpoint")
-    data_utils.get_file(f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/ckpt-1.data-00000-of-00002", f"{pretrained_models_url}ckpt-1.data-00000-of-00002")
-    data_utils.get_file(f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/ckpt-1.data-00001-of-00002", f"{pretrained_models_url}ckpt-1.data-00001-of-00002")
-    data_utils.get_file(f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/ckpt-1.index", f"{pretrained_models_url}ckpt-1.index")
+    data_utils.get_file(f"{pretrained_dir}/checkpoint", f"{pretrained_models_url}checkpoint")
+    data_utils.get_file(f"{pretrained_dir}/ckpt-1.data-00000-of-00002", f"{pretrained_models_url}ckpt-1.data-00000-of-00002")
+    data_utils.get_file(f"{pretrained_dir}/ckpt-1.data-00001-of-00002", f"{pretrained_models_url}ckpt-1.data-00001-of-00002")
+    data_utils.get_file(f"{pretrained_dir}/ckpt-1.index", f"{pretrained_models_url}ckpt-1.index")
 
-    # latest_ckpt = tf.train.latest_checkpoint(CHECKPOINT_DIR + "{WEIGHTS}_haiku/")
-    latest_ckpt = f"{CHECKPOINT_DIR}/{WEIGHTS}_haiku/ckpt-1"
+    # latest_ckpt = tf.train.latest_checkpoint(pretrained_dir)
+    latest_ckpt = f"{pretrained_dir}/ckpt-1"
     ckpt.restore(latest_ckpt).assert_consumed()
 elif WEIGHTS is not None:
     latest_ckpt = tf.train.latest_checkpoint(WEIGHTS)
@@ -476,9 +467,7 @@ train_loop = acme.EnvironmentLoop(
     logger=train_logger,
     observers=experiment.observers)
 
-max_num_actor_steps = (
-    experiment.max_num_actor_steps -
-    parent_counter.get_counts().get(train_counter.get_steps_key(), 0))
+max_num_actor_steps = experiment.max_num_actor_steps 
 
 
 # Create the evaluation actor and loop.
@@ -505,15 +494,16 @@ eval_loop = acme.EnvironmentLoop(
 
 print("\n--------------------------")
 print("Starting Training")
-steps = 0
+steps = parent_counter.get_counts().get(train_counter.get_steps_key(), 0)
 while steps < max_num_actor_steps:
+    print(f"Current steps: {steps}")
     eval_loop.run(num_episodes=num_eval_episodes)
     steps += train_loop.run(num_steps=eval_every)
 eval_loop.run(num_episodes=num_eval_episodes)
 print("Training Complete!")
 print("--------------------------\n")
 # Save final checkpoint
-ckpt.save(f"{CHECKPOINT_DIR}ckpt")
+ckpt.save(f"{CHECKPOINT_DIR}/ckpt")
 
 
 # Test the trained model
@@ -529,6 +519,7 @@ test_loop = acme.EnvironmentLoop(
     eval_actor)
 
 print("\n--------------------------")
+input("Press Enter to start test...")
 print("Starting Testing")
 test_loop.run(num_episodes=1)
 print("Testing Complete!")
