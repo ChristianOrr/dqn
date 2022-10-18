@@ -34,14 +34,15 @@ pretrained_weights = {"pong"}
 
 parser = argparse.ArgumentParser(description='Training for DQN Flax')
 parser.add_argument("--env_type", default="Pong", help='Type of environment, options include: Pong, Breakout...', required=False)
-parser.add_argument("--actor_steps", default=500_000, help='Number of steps to train', required=False)
+parser.add_argument("--actor_steps", default=1_000, help='Number of steps to train', required=False)
 parser.add_argument("--logs_dir", default="./logs/flax", help='Path to save Tensorboard logs', required=False)
 parser.add_argument("--saves_dir", default="./saves/flax", help='Path to save and load checkpoints', required=False)
 parser.add_argument("--weights_path",
                     help='One of the following pretrained weights (will download automatically): '
                          '"pong"'
                          'or a path to pretrained checkpoint file (for fine turning)',
-                    default=None, required=False)
+                    default=None, 
+                    required=False)
 parser.add_argument("--lr", help="Initial value for learning rate.", default=0.0001, type=float, required=False)
 parser.add_argument("--batch_size", help='batch size to use during training', type=int, default=32)
 parser.add_argument("--eval_steps", default=1_000, help='Perform evaluation at every eval_steps frequency', required=False)
@@ -132,7 +133,41 @@ def make_environment(seed: int) -> dm_env.Environment:
 Images = jnp.ndarray
 
 class PolicyNetwork(nn.Module):
+    """
+    Policy model based on the 2015 DQN paper.
+    """
 
+    @nn.compact
+    def __call__(self, inputs: Images) -> jnp.ndarray:
+        num_actions = environment_spec.actions.num_values
+
+        inputs_rank = jnp.ndim(inputs)
+        batched_inputs = inputs_rank == 4
+        if inputs_rank < 3 or inputs_rank > 4:
+            raise ValueError('Expected input BHWC or HWC. Got rank %d' % inputs_rank)
+
+        outputs = nn.Sequential(
+            [nn.Conv(features=32, kernel_size=(8, 8), strides=4, padding="SAME", use_bias=True), nn.relu,
+            nn.Conv(features=64, kernel_size=(4, 4), strides=2, padding="SAME", use_bias=True), nn.relu,
+            nn.Conv(features=64, kernel_size=(3, 3), strides=1, padding="SAME", use_bias=True), nn.relu]
+        )(inputs)
+        # Flatten
+        outputs = outputs.reshape(outputs.shape[0], -1)
+        outputs = nn.Sequential(
+            [nn.Dense(features=512),
+            nn.Dense(num_actions)]
+        )(outputs)
+
+
+        if batched_inputs:
+            return jnp.reshape(outputs, [outputs.shape[0], -1])  # [B, D]
+        return jnp.reshape(outputs, [-1])  # [D]
+
+
+class PolicyNetworkClassic(nn.Module):
+    """
+    Policy model based on the 2013 DQN paper.
+    """
 
     @nn.compact
     def __call__(self, inputs: Images) -> jnp.ndarray:
@@ -150,7 +185,6 @@ class PolicyNetwork(nn.Module):
         )(inputs)
         # Flatten
         outputs = outputs.reshape(outputs.shape[0], -1)
-
         outputs = nn.Sequential(
             [nn.Dense(features=256),
             nn.Dense(num_actions)]
@@ -160,7 +194,6 @@ class PolicyNetwork(nn.Module):
         if batched_inputs:
             return jnp.reshape(outputs, [outputs.shape[0], -1])  # [B, D]
         return jnp.reshape(outputs, [-1])  # [D]
-
 
 
 
@@ -177,15 +210,11 @@ def make_dqn_atari_network(
     return dqn.DQNNetworks(policy_network=typed_network)
 
 
-
-
-
-
 dqn_config = dqn.DQNConfig(
             discount=0.99,
             eval_epsilon=0.0,
             learning_rate=LR,
-            n_step=1,
+            n_step=1, # Original paper uses 1-step TD
             epsilon=0.1,
             target_update_period=1000,
             min_replay_size=20_000,
@@ -203,7 +232,6 @@ dqn_builder = dqn.DQNBuilder(
         )
 
 
-
 def make_logger(
         name: str,
         steps_key: Optional[str] = None,
@@ -214,8 +242,6 @@ def make_logger(
     serialize_fn = base.to_numpy
     logger = Dispatcher([terminal_logger, tb_logger], serialize_fn)
     return logger
-
-
 
 
 checkpoint_config = experiments.CheckpointingConfig(
